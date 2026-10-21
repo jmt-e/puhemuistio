@@ -6,7 +6,7 @@ import * as share from './share.js';
 import * as backup from './backup.js';
 import { Recorder, MicError, MAX_SECONDS, SAMPLE_RATE, int16ToFloat32, pcmToWav } from './recorder.js';
 
-export const APP_VERSION = '0.1.0';
+export const APP_VERSION = '0.2.0';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];

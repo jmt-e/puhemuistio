@@ -1,5 +1,147 @@
 {
-  "models": [],
+  "models": [
+    {
+      "id": "whisper-medium-fi",
+      "label": "Accurate",
+      "name": "Finnish Whisper medium",
+      "description": "Best for Finnish: about 1 word in 10 wrong in our Finnish test (English about the same). Needs a recent iPhone; on the phone's processor, transcribing takes roughly 1–2 times as long as the recording.",
+      "default": true,
+      "dtype": {
+        "wasm": {
+          "encoder_model": "q4",
+          "decoder_model_merged": "q8"
+        },
+        "webgpu": {
+          "encoder_model": "q4",
+          "decoder_model_merged": "q8"
+        }
+      },
+      "source": "Finnish-NLP/whisper-medium-finnish (Apache-2.0)",
+      "files": [
+        {
+          "path": "config.json",
+          "size": 1162
+        },
+        {
+          "path": "generation_config.json",
+          "size": 3755
+        },
+        {
+          "path": "onnx/decoder_model_merged_quantized.onnx",
+          "size": 2454560
+        },
+        {
+          "path": "onnx/decoder_model_merged_quantized.onnx_data",
+          "size": 89169920
+        },
+        {
+          "path": "onnx/decoder_model_merged_quantized.onnx_data_1",
+          "size": 89128960
+        },
+        {
+          "path": "onnx/decoder_model_merged_quantized.onnx_data_2",
+          "size": 88080384
+        },
+        {
+          "path": "onnx/decoder_model_merged_quantized.onnx_data_3",
+          "size": 89128960
+        },
+        {
+          "path": "onnx/decoder_model_merged_quantized.onnx_data_4",
+          "size": 49283072
+        },
+        {
+          "path": "onnx/decoder_model_merged_quantized.onnx_data_5",
+          "size": 53109760
+        },
+        {
+          "path": "onnx/encoder_model_q4.onnx",
+          "size": 407232
+        },
+        {
+          "path": "onnx/encoder_model_q4.onnx_data",
+          "size": 89063424
+        },
+        {
+          "path": "onnx/encoder_model_q4.onnx_data_1",
+          "size": 89784320
+        },
+        {
+          "path": "onnx/encoder_model_q4.onnx_data_2",
+          "size": 30801920
+        },
+        {
+          "path": "preprocessor_config.json",
+          "size": 184990
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 2480466
+        },
+        {
+          "path": "tokenizer_config.json",
+          "size": 830
+        }
+      ]
+    },
+    {
+      "id": "whisper-small",
+      "label": "Fast",
+      "name": "Whisper small (multilingual)",
+      "description": "Faster and lighter, good for English (about 1 word in 15 wrong) but weak in Finnish (about 3 words in 10 wrong). Use it if the Accurate model is too slow or the app closes while transcribing.",
+      "dtype": {
+        "wasm": "q8",
+        "webgpu": "q8"
+      },
+      "source": "openai/whisper-small (Apache-2.0)",
+      "files": [
+        {
+          "path": "config.json",
+          "size": 1489
+        },
+        {
+          "path": "generation_config.json",
+          "size": 3841
+        },
+        {
+          "path": "onnx/decoder_model_merged_quantized.onnx",
+          "size": 1234387
+        },
+        {
+          "path": "onnx/decoder_model_merged_quantized.onnx_data",
+          "size": 89450496
+        },
+        {
+          "path": "onnx/decoder_model_merged_quantized.onnx_data_1",
+          "size": 64604928
+        },
+        {
+          "path": "onnx/encoder_model_quantized.onnx",
+          "size": 278083
+        },
+        {
+          "path": "onnx/encoder_model_quantized.onnx_data",
+          "size": 88375296
+        },
+        {
+          "path": "onnx/encoder_model_quantized.onnx_data_1",
+          "size": 9437184
+        },
+        {
+          "path": "preprocessor_config.json",
+          "size": 356
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 2480466
+        },
+        {
+          "path": "tokenizer_config.json",
+          "size": 282713
+        }
+      ]
+    }
+  ],
   "runtime": [
     {
       "path": "vendor/ort/ort-wasm-simd-threaded.mjs",

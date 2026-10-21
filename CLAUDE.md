@@ -46,7 +46,8 @@ We build this as a simple proof of concept and improve it step by step.
 | `models/models.json` | Model list shown in Settings; `files`/`runtime` filled by `scripts/update-manifest.py` |
 | `vendor/transformers/` | Transformers.js 4.3.1 `transformers.min.js` (bundles the ONNX Runtime JS) |
 | `vendor/ort/` | ONNX Runtime Web WASM files matching that build (plain + asyncify/WebGPU) |
-| `tests/` | Local server and Playwright end-to-end tests with a fake microphone |
+| `tests/` | Local server, Playwright end-to-end tests with a fake microphone, `bench.mjs` engine timing |
+| `scripts/` | Model preparation (`quantize.py`, `dedupe-tied.py`, `split-model.py`, `update-manifest.py`) and accuracy test (`eval-wer.mjs`, `fleurs-testset.py`) |
 
 ## How things work
 
@@ -92,25 +93,19 @@ We build this as a simple proof of concept and improve it step by step.
   `node tests/e2e.mjs <speech.wav> fi|en|auto [modelId]` and
   `node tests/e2e-recovery.mjs <a.wav> <b.wav>` (WAV files are the fake mic).
 
-## Choosing the model
+## Speech models (decided October 2026, details in models/README.md)
 
-Finnish accuracy matters most. Candidates to compare (on a Finnish test set,
-same code path as the app):
-
-- Multilingual Whisper base and small (`onnx-community/whisper-*`): small
-  multilingual models are weak in Finnish.
-- Finnish fine-tunes with a licence that allows hosting in a public repo,
-  e.g. Finnish-NLP's Whisper fine-tunes (tiny, medium, large-v2, large-v3)
-  and community small fine-tunes. Converted to ONNX with Optimum if needed,
-  quantised (q8 for WASM, q4/fp16 for WebGPU), split with ONNX external
-  data chunks (`*.onnx_data`, `*.onnx_data_1`, … via
-  `transformers.js_config.use_external_data_format`) to stay under 100 MB
-  per file.
-- Must run on an iPhone without crashing Safari (memory), and the total
-  site must stay under 1 GB.
-- Offer "Fast" and "Accurate" in Settings when practical.
-
-Status and the decision are recorded in `models/README.md`.
+- **Accurate** (default): Finnish-NLP/whisper-medium-finnish, 4-bit encoder +
+  8-bit decoder, 673 MB. Finnish WER 10 %, English 10 % (FLEURS).
+- **Fast**: openai/whisper-small multilingual, 8-bit, 256 MB. Finnish 29 %,
+  English 7 %. Fallback when Accurate is too slow or runs out of memory.
+- The site is ~971 MB of GitHub Pages' 1 GB: a new model means removing or
+  shrinking one. Each file is split under 100 MB (`scripts/split-model.py`).
+- On the CPU (WASM), 8-bit is 2–2.5× faster than 4-bit; keep decoders 8-bit.
+- Not yet measured on a real iPhone: speed, memory (~2 GB in desktop Chromium
+  for Accurate) and the WebGPU path. Ask the owner for real numbers before
+  changing models.
+- Rebuild recipe and the comparison of all candidates: `models/README.md`.
 
 ## Roadmap (after the proof of concept)
 
