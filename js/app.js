@@ -6,7 +6,7 @@ import * as share from './share.js';
 import * as backup from './backup.js';
 import { Recorder, MicError, MAX_SECONDS, SAMPLE_RATE, int16ToFloat32, pcmToWav } from './recorder.js';
 
-export const APP_VERSION = '0.2.0';
+export const APP_VERSION = '0.3.0';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -19,6 +19,7 @@ const state = {
   noteId: null,       // note open in the note view
   note: null,         // that note as last loaded
   jobs: new Map(),    // noteId -> { stage, fraction, partial }
+  download: null,     // { id, loaded, total } while a model downloads
   queue: Promise.resolve(),
 };
 
@@ -221,6 +222,16 @@ async function renderDraftBanner() {
     parts.push(
       el('div', {}, el('strong', {}, 'Unfinished recording'), ` (${fmtTime(draft.samples / SAMPLE_RATE)}${draft.title ? ', ' + draft.title : ''}). It is saved; continue or finish it.`),
       el('div', { class: 'btn-row' }, el('button', { class: 'wide-btn primary', type: 'button', onclick: () => go('#/record') }, 'Open recording')),
+    );
+  } else if (state.download) {
+    const d = state.download;
+    const pct = d.total ? Math.round((d.loaded / d.total) * 100) : 0;
+    const bar = el('div', { class: 'progress' }, el('div', { class: 'progress-fill' }));
+    bar.firstChild.style.width = pct + '%';
+    parts.push(
+      el('div', {}, el('strong', {}, `Downloading the speech model… ${d.total ? pct + '%' : ''}`), d.total ? ` (${fmtBytes(d.loaded)} of ${fmtBytes(d.total)})` : ' starting'),
+      bar,
+      el('p', { class: 'muted small' }, 'Keep the app open; the screen stays on. If it stops, it continues from the same point when you open the app again.'),
     );
   } else {
     // Nudge to download the model on Wi-Fi before the first real use.
@@ -673,18 +684,18 @@ async function renderModels(progress = null) {
   const active = (await engine.getModel(state.settings.model)).id;
   const cards = [];
   for (const m of models) {
-    const have = await engine.cachedBytes(m);
     const bytes = await engine.modelBytes(m);
-    const cached = have === bytes;
+    const cached = (await engine.cachedBytes(m)) === bytes;
+    const have = cached ? bytes : await engine.savedBytes(m);
     const isActive = m.id === active;
-    const p = progress?.id === m.id ? progress : null;
+    const p = (progress || state.download)?.id === m.id ? progress || state.download : null;
     cards.push(el('div', { class: 'model-card' + (isActive ? ' active' : '') },
       el('div', { class: 'head' }, el('span', { class: 'name' }, `${m.label}: ${m.name}`), el('span', { class: 'size' }, fmtBytes(bytes))),
       el('p', {}, m.description),
       el('div', { class: 'actions' },
         isActive ? null : el('button', { type: 'button', onclick: () => chooseModel(m.id) }, 'Use this'),
         cached || p ? null : el('button', { type: 'button', class: isActive ? 'primary' : '', onclick: () => downloadModel(m) }, have ? 'Finish download' : 'Download'),
-        p ? el('button', { type: 'button', onclick: () => downloadAbort?.abort() }, 'Stop') : null,
+        p ? el('button', { type: 'button', onclick: stopDownload }, 'Stop') : null,
         cached && !p ? el('button', { type: 'button', onclick: () => removeModel(m) }, 'Remove from phone') : null,
       ),
       el('div', { class: 'status ' + (cached ? '' : 'muted') },
@@ -705,26 +716,86 @@ async function chooseModel(id) {
   renderModels();
 }
 
-async function downloadModel(m) {
-  downloadAbort?.abort();
+// iOS doesn't let a web app download while it is closed. Instead the
+// download is saved piece by piece (see model-files.js), remembered in
+// settings.pendingDownload, and continues on its own whenever the app is
+// opened or comes back to the foreground. The screen stays on meanwhile.
+let downloadWakeLock = null;
+
+async function downloadModel(m, { resumed = false } = {}) {
+  if (downloadAbort) return; // one at a time
   downloadAbort = new AbortController();
+  state.settings.pendingDownload = m.id;
+  await db.setSetting('pendingDownload', m.id);
   requestPersistence();
+  try {
+    downloadWakeLock = await navigator.wakeLock?.request('screen');
+  } catch {
+    downloadWakeLock = null; // not available: the download still works while the app is open
+  }
+  if (resumed) toast('Continuing the speech model download…');
   let last = 0;
+  const show = () => {
+    if (!$('#view-settings').hidden) renderModels();
+    if (!$('#view-list').hidden) renderDraftBanner();
+  };
+  state.download = { id: m.id, loaded: 0, total: 0 };
+  show();
   try {
     await engine.prepare(m.id, (p) => {
+      state.download = { id: m.id, ...p };
       const now = Date.now();
-      if (now - last > 250 || p.loaded === p.total) {
+      if (now - last > 400 || p.loaded === p.total) {
         last = now;
-        renderModels({ id: m.id, ...p });
+        show();
       }
     }, downloadAbort.signal);
+    state.settings.pendingDownload = null;
+    await db.setSetting('pendingDownload', null);
     toast('Speech model downloaded. It now works offline.');
   } catch (err) {
-    if (err.name !== 'AbortError') toast('Download failed: ' + err.message, 5000);
+    const signal = downloadAbort.signal;
+    if (signal.aborted && signal.reason === 'background') {
+      // Paused because the app went to the background; continues on return.
+    } else if (signal.aborted || err.name === 'AbortError') {
+      // Stopped by the user (the saved pieces stay for later).
+    } else if (document.visibilityState === 'hidden') {
+      // iOS cut the connection when the app went to the background.
+      // pendingDownload stays set; it continues on return.
+    } else {
+      toast('Download stopped: ' + err.message + '. Tap Download to continue from where it stopped.', 7000);
+      state.settings.pendingDownload = null;
+      await db.setSetting('pendingDownload', null);
+    }
   }
+  downloadWakeLock?.release().catch(() => {});
+  downloadWakeLock = null;
+  const pausedForBackground = downloadAbort.signal.reason === 'background';
   downloadAbort = null;
-  renderModels();
-  renderStorage();
+  state.download = null;
+  show();
+  // Came back to the foreground before this one finished unwinding.
+  if (pausedForBackground && document.visibilityState === 'visible') setTimeout(resumeDownload, 1000);
+  if (!$('#view-settings').hidden) renderStorage();
+}
+
+async function stopDownload() {
+  state.settings.pendingDownload = null;
+  await db.setSetting('pendingDownload', null);
+  downloadAbort?.abort();
+}
+
+/** Continue a download that was cut off, if there is one. */
+async function resumeDownload() {
+  const id = state.settings.pendingDownload;
+  if (!id || downloadAbort || document.visibilityState !== 'visible') return;
+  try {
+    const model = (await engine.models()).find((x) => x.id === id);
+    if (model && !(await engine.isCached(model))) downloadModel(model, { resumed: true });
+    else await db.setSetting('pendingDownload', (state.settings.pendingDownload = null));
+  } catch {
+    // Offline: try again next time the app comes to the foreground.
+  }
 }
 
 async function removeModel(m) {
@@ -871,9 +942,16 @@ function wire() {
   $('#backup-import').addEventListener('click', () => $('#backup-file').click());
   $('#backup-file').addEventListener('change', onImportFile);
 
-  // Save edits before iOS suspends or closes the app.
+  // Save edits before iOS suspends or closes the app; continue an
+  // interrupted model download when it comes back.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') flushNoteEdits();
+    if (document.visibilityState === 'hidden') {
+      flushNoteEdits();
+      // iOS freezes the app now; pause cleanly rather than leave a request hanging.
+      downloadAbort?.abort('background');
+    } else {
+      setTimeout(resumeDownload, 1000);
+    }
   });
 }
 
@@ -909,6 +987,7 @@ async function main() {
   wire();
   await route();
   resumeUnfinishedJobs();
+  resumeDownload();
 }
 
 main().catch((err) => {

@@ -11,7 +11,7 @@
 
 import {
   listModels, downloadModel, deleteModel, dtypeFor, bytesFor,
-  isCached as isCachedFor, cachedBytes as cachedBytesFor,
+  isCached as isCachedFor, cachedBytes as cachedBytesFor, savedBytes as savedBytesFor,
 } from './model-files.js';
 
 let worker = null;
@@ -99,6 +99,11 @@ export async function modelBytes(model) {
 
 export async function cachedBytes(model) {
   return cachedBytesFor(model, await pickDevice());
+}
+
+/** Bytes on the phone, including a download that stopped half-way. */
+export async function savedBytes(model) {
+  return savedBytesFor(model, await pickDevice());
 }
 
 export async function isCached(model) {

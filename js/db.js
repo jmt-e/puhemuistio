@@ -256,6 +256,7 @@ const DEFAULTS = {
   model: null,        // model id, null = default from engine
   email: '',
   device: 'auto',     // 'auto' (WebGPU when available) | 'wasm'
+  pendingDownload: null, // model id whose download should continue when the app opens
   backupAudio: true,
 };
 

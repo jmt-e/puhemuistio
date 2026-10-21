@@ -68,6 +68,19 @@ export async function cachedBytes(model, device) {
   return bytes;
 }
 
+/** Like cachedBytes, but also counts pieces of files still being downloaded. */
+export async function savedBytes(model, device) {
+  let bytes = await cachedBytes(model, device);
+  const partial = await caches.open(PARTIAL_CACHE);
+  const prefix = BASE + 'models/' + model.id + '/';
+  for (const req of await partial.keys()) {
+    if (!req.url.startsWith(prefix)) continue;
+    const res = await partial.match(req);
+    bytes += Number(res.headers.get('content-length')) || 0;
+  }
+  return Math.min(bytes, bytesFor(model, device));
+}
+
 export async function isCached(model, device) {
   return (await cachedBytes(model, device)) === bytesFor(model, device);
 }
@@ -75,40 +88,94 @@ export async function isCached(model, device) {
 /**
  * Download every file of the model this device needs that isn't cached yet.
  * onProgress({ loaded, total }) in bytes across all files.
+ *
+ * Files come in 8 MB pieces (HTTP Range requests), and each piece is saved
+ * as soon as it arrives. If the download stops (screen lock, app closed,
+ * network gone), calling this again continues from the last saved piece.
+ * iOS doesn't let web apps download while they are closed, so this is the
+ * next best thing.
  */
 export async function downloadModel(model, device, onProgress, signal) {
   const cache = await caches.open(MODEL_CACHE);
+  const partial = await caches.open(PARTIAL_CACHE);
   const list = downloadsFor(model, device);
   const total = list.reduce((s, f) => s + f.size, 0);
   let loaded = 0;
   for (const f of list) {
-    if (await cache.match(f.url)) {
-      loaded += f.size;
-      onProgress?.({ loaded, total });
-      continue;
-    }
-    const { parts, got, type } = await fetchWithRetry(f, (n) => onProgress?.({ loaded: loaded + n, total }), signal);
-    try {
-      await cache.put(f.url, new Response(new Blob(parts, { type }), { headers: { 'content-type': type, 'content-length': String(got) } }));
-    } catch (err) {
-      if (err.name === 'QuotaExceededError') {
-        throw new Error('Not enough storage space on this phone for the speech model. Free up space, or choose the Fast model.');
-      }
-      throw err;
+    if (!(await cache.match(f.url))) {
+      await downloadFile(f, cache, partial, (n) => onProgress?.({ loaded: loaded + n, total }), signal);
     }
     loaded += f.size;
     onProgress?.({ loaded, total });
   }
 }
 
+const PARTIAL_CACHE = 'puhemuistio-partial-v1';
+const PIECE = 8 * 1024 * 1024;
 const name = (f) => f.url.slice(BASE.length);
+const pieceKey = (f, i) => `${f.url}?piece=${i}`;
 
-/** Fetch one file completely, retrying a few times: phone connections drop. */
-async function fetchWithRetry(f, onBytes, signal, tries = 4) {
+async function downloadFile(f, cache, partial, onBytes, signal) {
+  const pieces = Math.max(1, Math.ceil(f.size / PIECE));
+  let done = 0; // bytes of this file already saved
+  let type = 'application/octet-stream';
+  for (let i = 0; i < pieces; i++) {
+    const start = i * PIECE;
+    const end = Math.min(f.size, start + PIECE) - 1;
+    const saved = await partial.match(pieceKey(f, i));
+    if (saved) {
+      type = saved.headers.get('content-type') || type;
+      done += end - start + 1;
+      onBytes(done);
+      continue;
+    }
+    const piece = await fetchPiece(f, pieces > 1 ? [start, end] : null, (n) => onBytes(done + n), signal);
+    type = piece.type;
+    if (piece.whole) {
+      // The server ignored the Range request and sent the whole file.
+      await put(cache, f.url, piece.blob, type);
+      await dropPieces(f, partial, pieces);
+      return;
+    }
+    await put(partial, pieceKey(f, i), piece.blob, type);
+    done += piece.blob.size;
+    onBytes(done);
+  }
+  // Join the pieces into the file the engine reads.
+  const blobs = [];
+  for (let i = 0; i < pieces; i++) blobs.push(await (await partial.match(pieceKey(f, i))).blob());
+  const file = new Blob(blobs, { type });
+  if (file.size !== f.size) {
+    await dropPieces(f, partial, pieces);
+    throw new Error(`${name(f)}: got ${file.size} of ${f.size} bytes, please try again`);
+  }
+  await put(cache, f.url, file, type);
+  await dropPieces(f, partial, pieces);
+}
+
+async function dropPieces(f, partial, pieces) {
+  for (let i = 0; i < pieces; i++) await partial.delete(pieceKey(f, i));
+}
+
+async function put(cache, key, blob, type) {
+  try {
+    await cache.put(key, new Response(blob, { headers: { 'content-type': type, 'content-length': String(blob.size) } }));
+  } catch (err) {
+    if (err.name === 'QuotaExceededError') {
+      throw new Error('Not enough storage space on this phone for the speech model. Free up space, or choose the Fast model.');
+    }
+    throw err;
+  }
+}
+
+/** One piece of a file (or the whole file), retrying a few times: phone connections drop. */
+async function fetchPiece(f, range, onBytes, signal, tries = 4) {
   for (let attempt = 1; ; attempt++) {
     try {
-      const res = await fetch(f.url, { signal });
+      const res = await fetch(f.url, { signal, headers: range ? { range: `bytes=${range[0]}-${range[1]}` } : {} });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const whole = res.status === 200;
+      const expected = range && !whole ? range[1] - range[0] + 1 : f.size;
       const reader = res.body.getReader();
       const parts = [];
       let got = 0;
@@ -117,15 +184,14 @@ async function fetchWithRetry(f, onBytes, signal, tries = 4) {
         if (done) break;
         parts.push(value);
         got += value.length;
-        onBytes(got);
+        onBytes(whole && range ? Math.min(got, range[1] - range[0] + 1) : got);
       }
-      if (got !== f.size) throw new Error(`got ${got} of ${f.size} bytes`);
-      return { parts, got, type: res.headers.get('content-type') || 'application/octet-stream' };
+      if (got !== expected) throw new Error(`got ${got} of ${expected} bytes`);
+      const type = res.headers.get('content-type') || 'application/octet-stream';
+      return { blob: new Blob(parts, { type }), type, whole: whole && !!range };
     } catch (err) {
-      if (err.name === 'AbortError' || attempt >= tries) {
-        if (err.name === 'AbortError') throw err;
-        throw new Error(`${name(f)}: ${err.message}`);
-      }
+      if (err.name === 'AbortError') throw err;
+      if (attempt >= tries) throw new Error(`${name(f)}: ${err.message}`);
       onBytes(0);
       await new Promise((r) => setTimeout(r, 1000 * attempt));
     }
@@ -136,4 +202,8 @@ async function fetchWithRetry(f, onBytes, signal, tries = 4) {
 export async function deleteModel(model) {
   const cache = await caches.open(MODEL_CACHE);
   for (const f of model.files) await cache.delete(BASE + 'models/' + model.id + '/' + f.path);
+  // Half-downloaded pieces of this model, if any.
+  const partial = await caches.open(PARTIAL_CACHE);
+  const prefix = BASE + 'models/' + model.id + '/';
+  for (const req of await partial.keys()) if (req.url.startsWith(prefix)) await partial.delete(req);
 }

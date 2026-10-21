@@ -10,7 +10,7 @@
 //   which lets the speech model use several CPU cores.
 // - Requests to any other server are refused here too.
 
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL_CACHE = 'puhemuistio-shell-' + VERSION;
 const MODEL_CACHE = 'puhemuistio-models-v1'; // same name as in js/model-files.js
 
@@ -91,9 +91,11 @@ self.addEventListener('fetch', (event) => {
       // A fresh request, not the page's own: Safari fails ("Load failed")
       // when a service worker re-sends a request that carries the page's
       // cache mode and abort signal.
-      const res = await fetch(plain, { credentials: 'same-origin' });
+      // Pass a Range header through: resumed downloads ask for the rest of a file.
+      const range = req.headers.get('range');
+      const res = await fetch(plain, { credentials: 'same-origin', headers: range ? { range } : {} });
       // Runtime files are small enough to keep as soon as they're used once.
-      if (res.ok && url.pathname.includes('/vendor/ort/')) {
+      if (res.status === 200 && url.pathname.includes('/vendor/ort/')) {
         const cache = await caches.open(MODEL_CACHE);
         await cache.put(plain, res.clone());
       }

@@ -73,8 +73,15 @@ We build this as a simple proof of concept and improve it step by step.
 - **Models** are downloaded only from this site, into Cache Storage
   (`puhemuistio-models-v1`) by `model-files.js`, with progress. The worker's
   `env.fetch` reads from that cache first. Transformers.js' own caches are
-  off so the model isn't stored twice. Downloads never start on their own,
+  off so the model isn't stored twice. Only the files for the device in use
+  (WASM or WebGPU dtype) are downloaded. Downloads never start on their own,
   except when the user stops a recording and no model is on the phone yet.
+- **Resumable downloads**: iOS gives web apps no background downloads
+  (no Background Fetch/Sync in Safari, and closed apps are frozen). Instead
+  files come in 8 MB Range pieces saved to `puhemuistio-partial-v1`;
+  `settings.pendingDownload` remembers an unfinished download, which
+  continues by itself when the app opens or returns to the foreground. The
+  screen is kept awake while downloading. Test: `node tests/e2e-download.mjs`.
 - **Service worker** adds COOP/COEP headers, making the page cross-origin
   isolated, so ONNX Runtime can use several CPU threads. This takes effect
   from the second page load. It answers requests to other origins with 403.
