@@ -255,6 +255,7 @@ const DEFAULTS = {
   language: 'fi',     // 'fi' | 'en' | 'auto'
   model: null,        // model id, null = default from engine
   email: '',
+  device: 'auto',     // 'auto' (WebGPU when available) | 'wasm'
   backupAudio: true,
 };
 

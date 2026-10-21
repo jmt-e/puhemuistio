@@ -9,7 +9,10 @@
 // The current engine runs Whisper on the phone in a Web Worker, on the GPU
 // (WebGPU) when the phone has it, otherwise on the CPU (WebAssembly).
 
-import { listModels, downloadModel, isCached, cachedBytes, deleteModel } from './model-files.js';
+import {
+  listModels, downloadModel, deleteModel, dtypeFor, bytesFor,
+  isCached as isCachedFor, cachedBytes as cachedBytesFor,
+} from './model-files.js';
 
 let worker = null;
 let nextId = 1;
@@ -50,9 +53,17 @@ function call(msg, onProgress, transfer = []) {
   });
 }
 
-/** 'webgpu' if the phone has a usable GPU adapter, else 'wasm'. */
-export function pickDevice(preference = 'auto') {
-  if (preference === 'wasm' || gpuFailed) return Promise.resolve('wasm');
+let devicePref = 'auto';
+
+/** 'auto' (GPU when available) or 'wasm' (always the CPU). */
+export function setDevicePreference(pref) {
+  devicePref = pref === 'wasm' ? 'wasm' : 'auto';
+  devicePromise = null;
+}
+
+/** 'webgpu' if the phone has a usable GPU adapter (and it's allowed), else 'wasm'. */
+export function pickDevice() {
+  if (devicePref === 'wasm' || gpuFailed) return Promise.resolve('wasm');
   if (!devicePromise) {
     devicePromise = (async () => {
       try {
@@ -81,11 +92,22 @@ async function requireModel(modelId) {
   return model;
 }
 
-export { isCached, cachedBytes };
+/** Download size of the model for this phone, in bytes. */
+export async function modelBytes(model) {
+  return bytesFor(model, await pickDevice());
+}
+
+export async function cachedBytes(model) {
+  return cachedBytesFor(model, await pickDevice());
+}
+
+export async function isCached(model) {
+  return isCachedFor(model, await pickDevice());
+}
 
 export async function prepare(modelId, onProgress, signal) {
   const model = await requireModel(modelId);
-  await downloadModel(model, onProgress, signal);
+  await downloadModel(model, await pickDevice(), onProgress, signal);
   return model;
 }
 
@@ -98,17 +120,16 @@ export async function remove(modelId) {
  * Transcribe 16 kHz mono audio.
  * onProgress({ stage: 'download'|'load'|'transcribe', fraction, partial? })
  */
-export async function transcribe(audio, { modelId, language = 'fi', devicePref = 'auto', onProgress } = {}) {
+export async function transcribe(audio, { modelId, language = 'fi', onProgress } = {}) {
   const model = await requireModel(modelId);
-  if (!(await isCached(model))) {
-    await downloadModel(model, (p) => onProgress?.({ stage: 'download', fraction: p.loaded / p.total }));
-  }
-  let device = await pickDevice(devicePref);
-  const run = (dev) => {
+  const run = async (dev) => {
+    if (!(await isCachedFor(model, dev))) {
+      await downloadModel(model, dev, (p) => onProgress?.({ stage: 'download', fraction: p.loaded / p.total }));
+    }
     // Copy: the buffer is transferred to the worker, and a retry needs it.
     const copy = audio.slice();
     return call(
-      { type: 'transcribe', model, device: dev, audio: copy, language },
+      { type: 'transcribe', model, device: dev, dtype: dtypeFor(model, dev), audio: copy, language },
       (p) => {
         if (p.stage === 'load') onProgress?.({ stage: 'load', fraction: p.total ? p.loaded / p.total : 0 });
         else onProgress?.(p);
@@ -116,6 +137,7 @@ export async function transcribe(audio, { modelId, language = 'fi', devicePref =
       [copy.buffer],
     );
   };
+  const device = await pickDevice();
   try {
     return await run(device);
   } catch (err) {
@@ -123,8 +145,7 @@ export async function transcribe(audio, { modelId, language = 'fi', devicePref =
     // WebGPU on phones is young; fall back to the CPU for the rest of this session.
     console.warn('WebGPU failed, using WebAssembly', err);
     gpuFailed = true;
-    device = 'wasm';
-    return await run(device);
+    return await run('wasm');
   }
 }
 

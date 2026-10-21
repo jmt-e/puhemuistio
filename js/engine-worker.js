@@ -59,8 +59,8 @@ function setWasmPaths(device) {
     : 1;
 }
 
-async function load(spec, device, report) {
-  const key = spec.id + '|' + device;
+async function load(spec, device, dtype, report) {
+  const key = spec.id + '|' + device + '|' + JSON.stringify(dtype);
   if (current?.key === key) return current;
   if (current) {
     await current.model.dispose().catch(() => {});
@@ -72,7 +72,7 @@ async function load(spec, device, report) {
   };
   const processor = await AutoProcessor.from_pretrained(spec.id, { progress_callback: progress });
   const model = await WhisperForConditionalGeneration.from_pretrained(spec.id, {
-    dtype: spec.dtype[device] || spec.dtype.wasm,
+    dtype,
     device,
     progress_callback: progress,
   });
@@ -162,8 +162,8 @@ async function detectLanguage(model, input_features) {
 
 const LANG_NAME = { fi: 'finnish', en: 'english' };
 
-async function transcribe({ model: spec, device, audio, language }, report) {
-  const { processor, model } = await load(spec, device, report);
+async function transcribe({ model: spec, device, dtype, audio, language }, report) {
+  const { processor, model } = await load(spec, device, dtype, report);
   const pieces = segment(audio);
   const total = pieces.reduce((s, [a, b]) => s + (b - a), 0) || 1;
   let done = 0;
@@ -209,7 +209,7 @@ self.onmessage = async (e) => {
   try {
     let result;
     if (msg.type === 'load') {
-      await load(msg.model, msg.device, report);
+      await load(msg.model, msg.device, msg.dtype, report);
       result = { device: msg.device };
     } else if (msg.type === 'transcribe') {
       result = await transcribe(msg, report);

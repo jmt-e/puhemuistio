@@ -230,7 +230,7 @@ async function renderDraftBanner() {
         parts.push(el('div', {}, el('strong', {}, 'No speech model yet.'), ' This test version can record and save notes; speech recognition arrives with the next update.'));
       } else if (!(await engine.isCached(model))) {
         parts.push(
-          el('div', {}, el('strong', {}, 'Speech model not on this phone yet'), ` (${fmtBytes(model.bytes)}). Download it once, preferably on Wi-Fi; after that everything works offline.`),
+          el('div', {}, el('strong', {}, 'Speech model not on this phone yet'), ` (${fmtBytes(await engine.modelBytes(model))}). Download it once, preferably on Wi-Fi; after that everything works offline.`),
           el('div', { class: 'btn-row' }, el('button', { class: 'wide-btn primary', type: 'button', onclick: () => go('#/settings') }, 'Download in Settings')),
         );
       }
@@ -646,6 +646,8 @@ async function showSettings() {
   setLangButtons('#settings-lang', state.settings.language);
   $('#settings-email').value = state.settings.email;
   $('#backup-audio').checked = state.settings.backupAudio;
+  $('#settings-gpu').checked = state.settings.device !== 'wasm';
+  $('#settings-gpu').disabled = !navigator.gpu;
   $('#version-info').textContent = `Version ${APP_VERSION}`;
   renderStorage();
   const dev = await engine.pickDevice();
@@ -672,11 +674,12 @@ async function renderModels(progress = null) {
   const cards = [];
   for (const m of models) {
     const have = await engine.cachedBytes(m);
-    const cached = have === m.bytes;
+    const bytes = await engine.modelBytes(m);
+    const cached = have === bytes;
     const isActive = m.id === active;
     const p = progress?.id === m.id ? progress : null;
     cards.push(el('div', { class: 'model-card' + (isActive ? ' active' : '') },
-      el('div', { class: 'head' }, el('span', { class: 'name' }, `${m.label}: ${m.name}`), el('span', { class: 'size' }, fmtBytes(m.bytes))),
+      el('div', { class: 'head' }, el('span', { class: 'name' }, `${m.label}: ${m.name}`), el('span', { class: 'size' }, fmtBytes(bytes))),
       el('p', {}, m.description),
       el('div', { class: 'actions' },
         isActive ? null : el('button', { type: 'button', onclick: () => chooseModel(m.id) }, 'Use this'),
@@ -854,6 +857,12 @@ function wire() {
     state.settings.email = e.target.value.trim();
     await db.setSetting('email', state.settings.email);
   });
+  $('#settings-gpu').addEventListener('change', async (e) => {
+    state.settings.device = e.target.checked ? 'auto' : 'wasm';
+    await db.setSetting('device', state.settings.device);
+    engine.setDevicePreference(state.settings.device);
+    showSettings();
+  });
   $('#backup-audio').addEventListener('change', async (e) => {
     state.settings.backupAudio = e.target.checked;
     await db.setSetting('backupAudio', e.target.checked);
@@ -896,6 +905,7 @@ async function main() {
     navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Service worker failed', err));
   }
   state.settings = await db.getSettings();
+  engine.setDevicePreference(state.settings.device);
   wire();
   await route();
   resumeUnfinishedJobs();
