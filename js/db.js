@@ -257,6 +257,7 @@ const DEFAULTS = {
   email: '',
   device: 'auto',     // 'auto' (WebGPU when available) | 'wasm'
   pendingDownload: null, // model id whose download should continue when the app opens
+  lastSeenVersion: null, // app version whose "what's new" the user has seen
   backupAudio: true,
 };
 

@@ -349,6 +349,8 @@ mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: in
 .sheet h3 { margin: 0 0 8px; font-size: 19px; }
 .sheet ol { padding-left: 22px; }
 .sheet li { margin-bottom: 8px; }
+.sheet .changes { margin: 4px 0 16px; padding-left: 20px; }
+.sheet .changes li { margin-bottom: 6px; }
 .sheet .btn-row { margin-top: 16px; }
 
 .toast {

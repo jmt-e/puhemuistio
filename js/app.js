@@ -4,9 +4,10 @@ import * as db from './db.js';
 import * as engine from './engine.js';
 import * as share from './share.js';
 import * as backup from './backup.js';
+import { CHANGELOG } from './changelog.js';
 import { Recorder, MicError, MAX_SECONDS, SAMPLE_RATE, int16ToFloat32, pcmToWav } from './recorder.js';
 
-export const APP_VERSION = '0.3.0';
+export const APP_VERSION = CHANGELOG[0].version;
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -131,6 +132,38 @@ function showMicHelp(kind) {
     }
     sheet.append(el('div', { class: 'btn-row' }, el('button', { class: 'wide-btn primary', type: 'button', onclick: () => close() }, 'OK')));
   });
+}
+
+// ---------- version history ----------
+
+function fmtDay(iso) {
+  return new Date(iso + 'T12:00:00').toLocaleDateString('fi-FI', { day: 'numeric', month: 'numeric', year: 'numeric' });
+}
+
+function showChangelog(entries, title) {
+  return openSheet((sheet, close) => {
+    sheet.append(el('h3', {}, title));
+    for (const e of entries) {
+      sheet.append(
+        el('p', { class: 'muted small' }, el('strong', {}, `Version ${e.version}`), ` · ${fmtDay(e.date)}`),
+        el('ul', { class: 'changes' }, ...e.changes.map((c) => el('li', {}, c))),
+      );
+    }
+    sheet.append(el('div', { class: 'btn-row' }, el('button', { class: 'wide-btn primary', type: 'button', onclick: () => close() }, 'OK')));
+  });
+}
+
+/** After an update, show once what changed since the version the user last saw. */
+async function announceUpdate() {
+  const seen = state.settings.lastSeenVersion;
+  if (seen === APP_VERSION) return;
+  await db.setSetting('lastSeenVersion', (state.settings.lastSeenVersion = APP_VERSION));
+  // No record: a first install (nothing to announce), or a version from
+  // before this notice existed, recognisable by having notes.
+  if (!seen && (await db.listNotes()).length === 0) return;
+  const upTo = seen ? CHANGELOG.findIndex((e) => e.version === seen) : -1;
+  const news = CHANGELOG.slice(0, upTo === -1 ? 1 : upTo);
+  if (news.length && $('#view-record').hidden) showChangelog(news, `Updated to version ${APP_VERSION}`);
 }
 
 // ---------- routing ----------
@@ -917,6 +950,7 @@ function wire() {
 
   // settings
   $('#settings-back').addEventListener('click', () => go('#/'));
+  $('#version-history').addEventListener('click', () => showChangelog(CHANGELOG, 'Version history'));
   for (const b of $$('#settings-lang button')) {
     b.addEventListener('click', async () => {
       state.settings.language = b.dataset.lang;
@@ -988,6 +1022,7 @@ async function main() {
   await route();
   resumeUnfinishedJobs();
   resumeDownload();
+  announceUpdate();
 }
 
 main().catch((err) => {
