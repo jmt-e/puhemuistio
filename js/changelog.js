@@ -4,6 +4,14 @@
 
 export const CHANGELOG = [
   {
+    version: '0.4.1',
+    date: '2026-10-21',
+    changes: [
+      'Fixed: Safari crashed ("A problem repeatedly occurred") while the speech model was downloading. Checking the download no longer loads the model into memory.',
+      'If a download keeps stopping without progress, the app stops retrying on its own and tells you, instead of crashing again.',
+    ],
+  },
+  {
     version: '0.4.0',
     date: '2026-10-21',
     changes: [

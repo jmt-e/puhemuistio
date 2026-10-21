@@ -5,6 +5,11 @@ the same list in Settings → Version history.
 
 <!-- Generated from js/changelog.js by scripts/changelog-md.mjs. Edit that file, not this one. -->
 
+## 0.4.1 (2026-10-21)
+
+- Fixed: Safari crashed ("A problem repeatedly occurred") while the speech model was downloading. Checking the download no longer loads the model into memory.
+- If a download keeps stopping without progress, the app stops retrying on its own and tells you, instead of crashing again.
+
 ## 0.4.0 (2026-10-21)
 
 - Version history in Settings, and a short notice after the app updates.

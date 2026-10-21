@@ -755,11 +755,19 @@ async function chooseModel(id) {
 // opened or comes back to the foreground. The screen stays on meanwhile.
 let downloadWakeLock = null;
 
+// If the page crashes while downloading (e.g. Safari runs out of memory),
+// an automatic restart would crash it again and again. So automatic restarts
+// are counted, the count resets whenever a piece is saved, and after
+// MAX_RESTARTS without progress the app stops and tells the user.
+const MAX_RESTARTS = 3;
+
 async function downloadModel(m, { resumed = false } = {}) {
   if (downloadAbort) return; // one at a time
   downloadAbort = new AbortController();
   state.settings.pendingDownload = m.id;
   await db.setSetting('pendingDownload', m.id);
+  const restarts = resumed ? (state.settings.downloadRestarts || 0) + 1 : 0;
+  await db.setSetting('downloadRestarts', (state.settings.downloadRestarts = restarts));
   requestPersistence();
   try {
     downloadWakeLock = await navigator.wakeLock?.request('screen');
@@ -772,17 +780,20 @@ async function downloadModel(m, { resumed = false } = {}) {
     if (!$('#view-settings').hidden) renderModels();
     if (!$('#view-list').hidden) renderDraftBanner();
   };
+  const onPiece = () => {
+    if (state.settings.downloadRestarts) db.setSetting('downloadRestarts', (state.settings.downloadRestarts = 0));
+  };
   state.download = { id: m.id, loaded: 0, total: 0 };
   show();
   try {
     await engine.prepare(m.id, (p) => {
       state.download = { id: m.id, ...p };
       const now = Date.now();
-      if (now - last > 400 || p.loaded === p.total) {
+      if (now - last > 1000 || p.loaded === p.total) {
         last = now;
         show();
       }
-    }, downloadAbort.signal);
+    }, downloadAbort.signal, onPiece);
     state.settings.pendingDownload = null;
     await db.setSetting('pendingDownload', null);
     toast('Speech model downloaded. It now works offline.');
@@ -822,6 +833,17 @@ async function stopDownload() {
 async function resumeDownload() {
   const id = state.settings.pendingDownload;
   if (!id || downloadAbort || document.visibilityState !== 'visible') return;
+  if ((state.settings.downloadRestarts || 0) >= MAX_RESTARTS) {
+    await db.setSetting('pendingDownload', (state.settings.pendingDownload = null));
+    await db.setSetting('downloadRestarts', (state.settings.downloadRestarts = 0));
+    openSheet((sheet, close) => sheet.append(
+      el('h3', {}, 'Download paused'),
+      el('p', {}, 'The speech model download stopped several times without getting further, so the app stopped retrying on its own. What was downloaded is kept.'),
+      el('p', { class: 'muted small' }, 'Try again in Settings. If it keeps stopping, restart the phone, or choose the smaller Fast model.'),
+      el('div', { class: 'btn-row' }, el('button', { class: 'wide-btn primary', type: 'button', onclick: () => close() }, 'OK')),
+    ));
+    return;
+  }
   try {
     const model = (await engine.models()).find((x) => x.id === id);
     if (model && !(await engine.isCached(model))) downloadModel(model, { resumed: true });

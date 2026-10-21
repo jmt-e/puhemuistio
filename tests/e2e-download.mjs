@@ -46,8 +46,17 @@ await page.waitForSelector('.model-card');
 console.log('resumed at:', await status(page));
 await page.waitForFunction(() => document.querySelectorAll('.model-card')[1].textContent.includes('On this phone'), null, { timeout: 300000 });
 console.log('finished:', await status(page));
-const leftover = await page.evaluate(async () => (await (await caches.open('puhemuistio-partial-v1')).keys()).length);
-console.log('leftover pieces:', leftover, '| errors:', errors.length ? errors : 'none');
+// Read the biggest file back through the piece reader and compare with the original.
+const file = 'models/whisper-small/onnx/decoder_model_merged_quantized.onnx_data';
+const check = await page.evaluate(async (file) => {
+  const { readFile } = await import('./js/model-files.js');
+  const stored = new Uint8Array(await (await readFile(new URL(file, location.href).href)).arrayBuffer());
+  const original = new Uint8Array(await (await fetch(file + '?nocache=' + Date.now(), { cache: 'no-store' })).arrayBuffer());
+  let same = stored.length === original.length;
+  for (let i = 0; same && i < stored.length; i += 4093) same = stored[i] === original[i];
+  return { stored: stored.length, original: original.length, same };
+}, file);
+console.log('read back:', check, '| errors:', errors.length ? errors : 'none');
 await ctx.close();
 server.kill();
-process.exit(leftover || errors.length ? 1 : 0);
+process.exit(!check.same || errors.length ? 1 : 0);

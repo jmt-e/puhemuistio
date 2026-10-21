@@ -14,7 +14,7 @@ import {
   LogitsProcessorList,
   WhisperTextStreamer,
 } from '../vendor/transformers/transformers.min.js';
-import { MODEL_CACHE } from './model-files.js';
+import { readFile } from './model-files.js';
 
 const BASE = new URL('../', import.meta.url).href;
 const SAMPLE_RATE = 16000;
@@ -34,9 +34,8 @@ env.fetch = async (url, init) => {
   const abs = new URL(url, BASE).href;
   if (!abs.startsWith(BASE)) throw new Error('Blocked request to another server: ' + abs);
   try {
-    const cache = await caches.open(MODEL_CACHE);
-    const hit = await cache.match(abs);
-    if (hit) return hit;
+    const stored = await readFile(abs);
+    if (stored) return stored;
   } catch {
     // Cache API unavailable (private mode): fall through to the network.
   }

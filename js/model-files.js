@@ -58,103 +58,126 @@ export function bytesFor(model, device) {
   return downloadsFor(model, device).reduce((s, f) => s + f.size, 0);
 }
 
-/** How many of the bytes this device needs are already on the phone. */
-export async function cachedBytes(model, device) {
+// ---------- what is on the phone ----------
+//
+// Storage layout in MODEL_CACHE. A file that fits in one piece is stored
+// under its own URL. A bigger file is stored as pieces, "<url>?piece=<i>",
+// plus a marker "<url>?pieces=<n>&size=<bytes>" written after the last
+// piece. Pieces are never joined in storage: Safari's Cache.match() loads a
+// whole entry into memory, so joining (or even checking) big entries crashed
+// the page. readFile streams the pieces one at a time when the model loads.
+// Checks use cache.keys(), which loads no content.
+
+const PIECE = 8 * 1024 * 1024;
+const pieceCount = (size) => Math.max(1, Math.ceil(size / PIECE));
+const pieceKey = (url, i) => `${url}?piece=${i}`;
+const markerKey = (url, n, size) => `${url}?pieces=${n}&size=${size}`;
+
+async function storedKeys() {
   const cache = await caches.open(MODEL_CACHE);
-  let bytes = 0;
-  for (const f of downloadsFor(model, device)) {
-    if (await cache.match(f.url)) bytes += f.size;
-  }
-  return bytes;
+  return new Set((await cache.keys()).map((r) => r.url));
+}
+
+function fileState(f, keys) {
+  const n = pieceCount(f.size);
+  if (keys.has(f.url) || keys.has(markerKey(f.url, n, f.size))) return { complete: true, bytes: f.size };
+  let pieces = 0;
+  for (let i = 0; i < n; i++) if (keys.has(pieceKey(f.url, i))) pieces++;
+  return { complete: false, bytes: Math.min(f.size, pieces * PIECE) };
+}
+
+/** How many of the bytes this device needs are on the phone as complete files. */
+export async function cachedBytes(model, device) {
+  const keys = await storedKeys();
+  return downloadsFor(model, device).reduce((s, f) => s + (fileState(f, keys).complete ? f.size : 0), 0);
 }
 
 /** Like cachedBytes, but also counts pieces of files still being downloaded. */
 export async function savedBytes(model, device) {
-  let bytes = await cachedBytes(model, device);
-  const partial = await caches.open(PARTIAL_CACHE);
-  const prefix = BASE + 'models/' + model.id + '/';
-  for (const req of await partial.keys()) {
-    if (!req.url.startsWith(prefix)) continue;
-    const res = await partial.match(req);
-    bytes += Number(res.headers.get('content-length')) || 0;
-  }
-  return Math.min(bytes, bytesFor(model, device));
+  const keys = await storedKeys();
+  return downloadsFor(model, device).reduce((s, f) => s + fileState(f, keys).bytes, 0);
 }
 
 export async function isCached(model, device) {
-  return (await cachedBytes(model, device)) === bytesFor(model, device);
+  const keys = await storedKeys();
+  return downloadsFor(model, device).every((f) => fileState(f, keys).complete);
 }
 
 /**
- * Download every file of the model this device needs that isn't cached yet.
- * onProgress({ loaded, total }) in bytes across all files.
- *
- * Files come in 8 MB pieces (HTTP Range requests), and each piece is saved
- * as soon as it arrives. If the download stops (screen lock, app closed,
- * network gone), calling this again continues from the last saved piece.
- * iOS doesn't let web apps download while they are closed, so this is the
- * next best thing.
+ * A stored file as a Response, or null if it isn't (completely) on the
+ * phone. A file stored in pieces is streamed one piece at a time, so only
+ * what the reader actually consumes is loaded into memory.
+ * (sw.js has a copy of this for the service worker.)
  */
-export async function downloadModel(model, device, onProgress, signal) {
+export async function readFile(url) {
   const cache = await caches.open(MODEL_CACHE);
-  const partial = await caches.open(PARTIAL_CACHE);
+  const keys = (await cache.keys()).map((r) => r.url);
+  if (keys.includes(url)) return cache.match(url);
+  const marker = keys.find((k) => k.startsWith(url + '?pieces='));
+  if (!marker) return null;
+  const params = new URL(marker).searchParams;
+  const n = Number(params.get('pieces'));
+  const size = params.get('size');
+  let i = 0;
+  const body = new ReadableStream({
+    async pull(controller) {
+      if (i >= n) return controller.close();
+      const res = await cache.match(pieceKey(url, i++));
+      if (!res) return controller.error(new Error('A piece of the speech model is missing; download it again.'));
+      controller.enqueue(new Uint8Array(await res.arrayBuffer()));
+    },
+  });
+  return new Response(body, { headers: { 'content-type': 'application/octet-stream', 'content-length': size } });
+}
+
+/**
+ * Download every file of the model this device needs that isn't saved yet.
+ * onProgress({ loaded, total }) in bytes across all files; onPiece() after
+ * each piece is saved.
+ *
+ * Files come in 8 MB pieces (HTTP Range requests), each saved as soon as it
+ * arrives. If the download stops (screen lock, app closed, network gone),
+ * calling this again continues from the last saved piece. iOS doesn't let
+ * web apps download while they are closed, so this is the next best thing.
+ */
+export async function downloadModel(model, device, onProgress, signal, onPiece) {
+  const cache = await caches.open(MODEL_CACHE);
+  const keys = await storedKeys();
   const list = downloadsFor(model, device);
   const total = list.reduce((s, f) => s + f.size, 0);
   let loaded = 0;
   for (const f of list) {
-    if (!(await cache.match(f.url))) {
-      await downloadFile(f, cache, partial, (n) => onProgress?.({ loaded: loaded + n, total }), signal);
+    if (!fileState(f, keys).complete) {
+      await downloadFile(f, cache, keys, (n) => onProgress?.({ loaded: loaded + n, total }), signal, onPiece);
     }
     loaded += f.size;
     onProgress?.({ loaded, total });
   }
 }
 
-const PARTIAL_CACHE = 'puhemuistio-partial-v1';
-const PIECE = 8 * 1024 * 1024;
 const name = (f) => f.url.slice(BASE.length);
-const pieceKey = (f, i) => `${f.url}?piece=${i}`;
 
-async function downloadFile(f, cache, partial, onBytes, signal) {
-  const pieces = Math.max(1, Math.ceil(f.size / PIECE));
-  let done = 0; // bytes of this file already saved
-  let type = 'application/octet-stream';
-  for (let i = 0; i < pieces; i++) {
+async function downloadFile(f, cache, keys, onBytes, signal, onPiece) {
+  const n = pieceCount(f.size);
+  if (n === 1) {
+    const piece = await fetchPiece(f, null, onBytes, signal);
+    await put(cache, f.url, piece.blob, piece.type);
+    onPiece?.();
+    return;
+  }
+  let done = 0;
+  for (let i = 0; i < n; i++) {
     const start = i * PIECE;
     const end = Math.min(f.size, start + PIECE) - 1;
-    const saved = await partial.match(pieceKey(f, i));
-    if (saved) {
-      type = saved.headers.get('content-type') || type;
-      done += end - start + 1;
-      onBytes(done);
-      continue;
+    if (!keys.has(pieceKey(f.url, i))) {
+      const piece = await fetchPiece(f, [start, end], (b) => onBytes(done + b), signal);
+      await put(cache, pieceKey(f.url, i), piece.blob, piece.type);
+      onPiece?.();
     }
-    const piece = await fetchPiece(f, pieces > 1 ? [start, end] : null, (n) => onBytes(done + n), signal);
-    type = piece.type;
-    if (piece.whole) {
-      // The server ignored the Range request and sent the whole file.
-      await put(cache, f.url, piece.blob, type);
-      await dropPieces(f, partial, pieces);
-      return;
-    }
-    await put(partial, pieceKey(f, i), piece.blob, type);
-    done += piece.blob.size;
+    done += end - start + 1;
     onBytes(done);
   }
-  // Join the pieces into the file the engine reads.
-  const blobs = [];
-  for (let i = 0; i < pieces; i++) blobs.push(await (await partial.match(pieceKey(f, i))).blob());
-  const file = new Blob(blobs, { type });
-  if (file.size !== f.size) {
-    await dropPieces(f, partial, pieces);
-    throw new Error(`${name(f)}: got ${file.size} of ${f.size} bytes, please try again`);
-  }
-  await put(cache, f.url, file, type);
-  await dropPieces(f, partial, pieces);
-}
-
-async function dropPieces(f, partial, pieces) {
-  for (let i = 0; i < pieces; i++) await partial.delete(pieceKey(f, i));
+  await put(cache, markerKey(f.url, n, f.size), new Blob([]), 'text/plain');
 }
 
 async function put(cache, key, blob, type) {
@@ -174,8 +197,8 @@ async function fetchPiece(f, range, onBytes, signal, tries = 4) {
     try {
       const res = await fetch(f.url, { signal, headers: range ? { range: `bytes=${range[0]}-${range[1]}` } : {} });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const whole = res.status === 200;
-      const expected = range && !whole ? range[1] - range[0] + 1 : f.size;
+      if (range && res.status !== 206) throw new Error('the server does not support resuming');
+      const expected = range ? range[1] - range[0] + 1 : f.size;
       const reader = res.body.getReader();
       const parts = [];
       let got = 0;
@@ -184,13 +207,13 @@ async function fetchPiece(f, range, onBytes, signal, tries = 4) {
         if (done) break;
         parts.push(value);
         got += value.length;
-        onBytes(whole && range ? Math.min(got, range[1] - range[0] + 1) : got);
+        onBytes(got);
       }
       if (got !== expected) throw new Error(`got ${got} of ${expected} bytes`);
       const type = res.headers.get('content-type') || 'application/octet-stream';
-      return { blob: new Blob(parts, { type }), type, whole: whole && !!range };
+      return { blob: new Blob(parts, { type }), type };
     } catch (err) {
-      if (err.name === 'AbortError') throw err;
+      if (err.name === 'AbortError' || signal?.aborted) throw err;
       if (attempt >= tries) throw new Error(`${name(f)}: ${err.message}`);
       onBytes(0);
       await new Promise((r) => setTimeout(r, 1000 * attempt));
@@ -198,12 +221,12 @@ async function fetchPiece(f, range, onBytes, signal, tries = 4) {
   }
 }
 
-/** Remove the model's own files (all versions). The runtime files are shared, so they stay. */
+/** Remove the model's own files (all versions, pieces too). The runtime files are shared, so they stay. */
 export async function deleteModel(model) {
   const cache = await caches.open(MODEL_CACHE);
-  for (const f of model.files) await cache.delete(BASE + 'models/' + model.id + '/' + f.path);
-  // Half-downloaded pieces of this model, if any.
-  const partial = await caches.open(PARTIAL_CACHE);
   const prefix = BASE + 'models/' + model.id + '/';
-  for (const req of await partial.keys()) if (req.url.startsWith(prefix)) await partial.delete(req);
+  for (const req of await cache.keys()) if (req.url.startsWith(prefix)) await cache.delete(req);
 }
+
+// Pieces from version 0.3.0 lived in a separate cache; they are not reused.
+caches.delete('puhemuistio-partial-v1').catch(() => {});

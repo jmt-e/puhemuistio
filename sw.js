@@ -10,7 +10,7 @@
 //   which lets the speech model use several CPU cores.
 // - Requests to any other server are refused here too.
 
-const VERSION = 'v7';
+const VERSION = 'v8';
 const SHELL_CACHE = 'puhemuistio-shell-' + VERSION;
 const MODEL_CACHE = 'puhemuistio-models-v1'; // same name as in js/model-files.js
 
@@ -69,6 +69,29 @@ function withHeaders(res) {
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
+// A stored model or runtime file, whole or streamed from its 8 MB pieces.
+// Same as readFile() in js/model-files.js (this worker can't import it).
+async function readStored(url) {
+  const cache = await caches.open(MODEL_CACHE);
+  const keys = (await cache.keys()).map((r) => r.url);
+  if (keys.includes(url)) return cache.match(url);
+  const marker = keys.find((k) => k.startsWith(url + '?pieces='));
+  if (!marker) return null;
+  const params = new URL(marker).searchParams;
+  const n = Number(params.get('pieces'));
+  let i = 0;
+  const body = new ReadableStream({
+    async pull(controller) {
+      if (i >= n) return controller.close();
+      const res = await cache.match(`${url}?piece=${i++}`);
+      if (!res) return controller.error(new Error('missing piece'));
+      controller.enqueue(new Uint8Array(await res.arrayBuffer()));
+    },
+  });
+  const type = url.endsWith('.wasm') ? 'application/wasm' : url.endsWith('.mjs') ? 'text/javascript' : 'application/octet-stream';
+  return new Response(body, { headers: { 'content-type': type, 'content-length': params.get('size') } });
+}
+
 const scopeUrl = new URL(self.registration.scope);
 const isModelOrRuntime = (url) => url.pathname.startsWith(scopeUrl.pathname + 'models/') && !url.pathname.endsWith('/models.json')
   || url.pathname.startsWith(scopeUrl.pathname + 'vendor/ort/');
@@ -87,13 +110,15 @@ self.addEventListener('fetch', (event) => {
   if (isModelOrRuntime(url)) {
     event.respondWith((async () => {
       const plain = url.origin + url.pathname;
-      const hit = await caches.match(plain);
-      if (hit) return withHeaders(hit);
+      // Range requests are downloads in progress: always from the network.
+      const range = req.headers.get('range');
+      if (!range) {
+        const stored = await readStored(plain);
+        if (stored) return withHeaders(stored);
+      }
       // A fresh request, not the page's own: Safari fails ("Load failed")
       // when a service worker re-sends a request that carries the page's
-      // cache mode and abort signal.
-      // Pass a Range header through: resumed downloads ask for the rest of a file.
-      const range = req.headers.get('range');
+      // cache mode and abort signal. The Range header is passed through.
       const res = await fetch(plain, { credentials: 'same-origin', headers: range ? { range } : {} });
       // Runtime files are small enough to keep as soon as they're used once.
       if (res.status === 200 && url.pathname.includes('/vendor/ort/')) {

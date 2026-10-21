@@ -78,10 +78,17 @@ We build this as a simple proof of concept and improve it step by step.
   except when the user stops a recording and no model is on the phone yet.
 - **Resumable downloads**: iOS gives web apps no background downloads
   (no Background Fetch/Sync in Safari, and closed apps are frozen). Instead
-  files come in 8 MB Range pieces saved to `puhemuistio-partial-v1`;
-  `settings.pendingDownload` remembers an unfinished download, which
-  continues by itself when the app opens or returns to the foreground. The
-  screen is kept awake while downloading. Test: `node tests/e2e-download.mjs`.
+  files come in 8 MB Range pieces, stored for good as `<url>?piece=<i>` plus
+  a marker `<url>?pieces=<n>&size=<bytes>`; `readFile` (and `readStored` in
+  `sw.js`) streams them back one piece at a time. `settings.pendingDownload`
+  remembers an unfinished download, which continues by itself when the app
+  opens or returns to the foreground (at most 3 automatic restarts without a
+  new piece: crash-loop guard). The screen is kept awake while downloading.
+  Test: `node tests/e2e-download.mjs`.
+- **Safari memory trap**: `Cache.match()` loads the whole entry into memory
+  in Safari. Never call it to check whether something is stored; use
+  `cache.keys()`. Never join big entries in storage. (Version 0.4.0 crashed
+  Safari this way.)
 - **Service worker** adds COOP/COEP headers, making the page cross-origin
   isolated, so ONNX Runtime can use several CPU threads. This takes effect
   from the second page load. It answers requests to other origins with 403.

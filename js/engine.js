@@ -110,9 +110,9 @@ export async function isCached(model) {
   return isCachedFor(model, await pickDevice());
 }
 
-export async function prepare(modelId, onProgress, signal) {
+export async function prepare(modelId, onProgress, signal, onPiece) {
   const model = await requireModel(modelId);
-  await downloadModel(model, await pickDevice(), onProgress, signal);
+  await downloadModel(model, await pickDevice(), onProgress, signal, onPiece);
   return model;
 }
 
