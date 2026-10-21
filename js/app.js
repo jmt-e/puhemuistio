@@ -460,9 +460,22 @@ async function runTranscription(noteId, { replace, language }) {
     const audio = int16ToFloat32(pcm.subarray(from));
     const lang = language || note.language || state.settings.language;
     // Marker: if Safari kills the page mid-way (usually out of memory), the
-    // next start sees it and doesn't retry in a crash loop.
-    note.transcribing = true;
+    // next start sees it and doesn't retry in a crash loop. It records the
+    // model, the chip and the step, so the message can say where it stopped.
+    const model = await engine.getModel(state.settings.model);
+    const marker = { model: model?.id, label: model?.label, device: await engine.pickDevice(), stage: 'start' };
+    note.transcribing = marker;
+    note.crash = null;
     await db.saveNote(note);
+    const saveStage = async (stage) => {
+      if (marker.stage === stage) return;
+      marker.stage = stage;
+      const n = await db.getNote(noteId);
+      if (n?.transcribing) {
+        n.transcribing = { ...marker };
+        await db.saveNote(n);
+      }
+    };
 
     const result = audio.length < SAMPLE_RATE * 0.3
       ? { text: '', language: lang }
@@ -472,6 +485,7 @@ async function runTranscription(noteId, { replace, language }) {
         onProgress: (p) => {
           state.jobs.set(noteId, p);
           renderJob(noteId);
+          saveStage(p.stage);
         },
       });
 
@@ -571,9 +585,33 @@ function renderNoteMeta(note) {
   const errBox = $('#note-error');
   const job = state.jobs.get(note.id);
   if (note.error && !job) {
+    const crash = note.crash || {};
+    const retry = async ({ device, model } = {}) => {
+      if (device) {
+        state.settings.device = device;
+        await db.setSetting('device', device);
+        engine.setDevicePreference(device);
+      }
+      if (model) {
+        state.settings.model = model;
+        await db.setSetting('model', model);
+      }
+      queueTranscription(note.id);
+    };
+    const buttons = [];
+    if (crash.device === 'webgpu') {
+      buttons.push(el('button', { class: 'wide-btn', type: 'button', onclick: () => retry({ device: 'wasm' }) }, 'Try again without the graphics chip'));
+    }
+    if (crash.label && crash.label !== 'Fast') {
+      buttons.push(el('button', { class: 'wide-btn', type: 'button', onclick: async () => {
+        const fast = (await engine.models()).find((x) => x.label === 'Fast');
+        retry({ model: fast?.id });
+      } }, 'Try again with the Fast model'));
+    }
+    buttons.push(el('button', { class: 'wide-btn', type: 'button', onclick: () => retry() }, 'Try again'));
     errBox.replaceChildren(
       el('div', {}, 'Transcription failed: ' + note.error),
-      el('div', { class: 'btn-row' }, el('button', { class: 'wide-btn', type: 'button', onclick: () => queueTranscription(note.id) }, 'Try again')),
+      el('div', { class: 'btn-row' }, ...buttons),
     );
     errBox.hidden = false;
   } else if (note.pendingFrom != null && !job) {
@@ -1023,8 +1061,16 @@ async function resumeUnfinishedJobs() {
     if (n.transcribing) {
       // The app stopped in the middle of this one. Don't retry on our own:
       // if it ran out of memory, it would just happen again.
+      const m = typeof n.transcribing === 'object' ? n.transcribing : {};
+      const where = {
+        download: 'while downloading the speech model',
+        load: 'while loading the speech model into memory',
+        transcribe: 'while transcribing',
+      }[m.stage] || 'during transcription';
+      const how = [m.label && `${m.label} model`, m.device && (m.device === 'webgpu' ? 'graphics chip' : 'processor')].filter(Boolean).join(', ');
+      n.crash = m;
       n.transcribing = false;
-      n.error = 'The app closed during transcription, possibly because the phone ran out of memory. Try again, or choose the Fast model in Settings.';
+      n.error = `The app closed ${where}${how ? ` (${how})` : ''}, most likely because the phone ran out of memory.`;
       await db.saveNote(n);
     } else if (n.pendingFrom != null && !n.error && n.audioSamples > 0 && modelReady) {
       // Waiting from an earlier session (e.g. app closed before it started).

@@ -5,6 +5,11 @@ the same list in Settings → Version history.
 
 <!-- Generated from js/changelog.js by scripts/changelog-md.mjs. Edit that file, not this one. -->
 
+## 0.4.2 (2026-10-21)
+
+- If the app closes while transcribing, the note now says at which step (downloading, loading the model or transcribing), with which model and chip.
+- One-tap retry with the Fast model, or without the graphics chip.
+
 ## 0.4.1 (2026-10-21)
 
 - Fixed: Safari crashed ("A problem repeatedly occurred") while the speech model was downloading. Checking the download no longer loads the model into memory.

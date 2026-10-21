@@ -10,7 +10,7 @@
 //   which lets the speech model use several CPU cores.
 // - Requests to any other server are refused here too.
 
-const VERSION = 'v8';
+const VERSION = 'v9';
 const SHELL_CACHE = 'puhemuistio-shell-' + VERSION;
 const MODEL_CACHE = 'puhemuistio-models-v1'; // same name as in js/model-files.js
 

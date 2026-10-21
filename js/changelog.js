@@ -4,6 +4,14 @@
 
 export const CHANGELOG = [
   {
+    version: '0.4.2',
+    date: '2026-10-21',
+    changes: [
+      'If the app closes while transcribing, the note now says at which step (downloading, loading the model or transcribing), with which model and chip.',
+      'One-tap retry with the Fast model, or without the graphics chip.',
+    ],
+  },
+  {
     version: '0.4.1',
     date: '2026-10-21',
     changes: [
