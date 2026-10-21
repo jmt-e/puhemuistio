@@ -121,9 +121,16 @@ We build this as a simple proof of concept and improve it step by step.
 - The site is ~971 MB of GitHub Pages' 1 GB: a new model means removing or
   shrinking one. Each file is split under 100 MB (`scripts/split-model.py`).
 - On the CPU (WASM), 8-bit is 2–2.5× faster than 4-bit; keep decoders 8-bit.
-- Not yet measured on a real iPhone: speed, memory (~2 GB in desktop Chromium
-  for Accurate) and the WebGPU path. Ask the owner for real numbers before
-  changing models.
+- **WebGPU**: a model runs on the GPU only if `models.json` gives it a
+  `dtype.webgpu` (`engine.deviceFor`). Neither current model has one: on the
+  owner's iPhone (iOS 26 Safari, October 2026) the Fast model loaded but
+  Safari crashed while transcribing on WebGPU. 8-bit (MatMulInteger) has no
+  WebGPU kernel, so it falls back to the CPU with copies. A GPU version needs
+  4-bit/fp16 files, which don't fit the 1 GB site next to the current ones;
+  test any such change on the phone first.
+- Not yet measured on a real iPhone: speed and memory of either model on
+  the processor (~1 GB Fast, ~2 GB Accurate in desktop Chromium). Ask the
+  owner for real numbers before changing models.
 - Rebuild recipe and the comparison of all candidates: `models/README.md`.
 
 ## Roadmap (after the proof of concept)

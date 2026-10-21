@@ -5,6 +5,11 @@ the same list in Settings → Version history.
 
 <!-- Generated from js/changelog.js by scripts/changelog-md.mjs. Edit that file, not this one. -->
 
+## 0.5.0 (2026-10-21)
+
+- Fixed: transcription crashed on the iPhone's graphics chip. Both models now run on the processor, which is the path that was tested. The graphics chip will only be used for models made for it.
+- After a crash, the note opened at start now shows what happened and the retry buttons straight away.
+
 ## 0.4.2 (2026-10-21)
 
 - If the app closes while transcribing, the note now says at which step (downloading, loading the model or transcribing), with which model and chip.

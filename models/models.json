@@ -10,10 +10,6 @@
         "wasm": {
           "encoder_model": "q4",
           "decoder_model_merged": "q8"
-        },
-        "webgpu": {
-          "encoder_model": "q4",
-          "decoder_model_merged": "q8"
         }
       },
       "source": "Finnish-NLP/whisper-medium-finnish (Apache-2.0)",
@@ -90,8 +86,7 @@
       "name": "Whisper small (multilingual)",
       "description": "Faster and lighter, good for English (about 1 word in 15 wrong) but weak in Finnish (about 3 words in 10 wrong). Use it if the Accurate model is too slow or the app closes while transcribing.",
       "dtype": {
-        "wasm": "q8",
-        "webgpu": "q8"
+        "wasm": "q8"
       },
       "source": "openai/whisper-small (Apache-2.0)",
       "files": [

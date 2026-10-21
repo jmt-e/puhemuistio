@@ -4,6 +4,14 @@
 
 export const CHANGELOG = [
   {
+    version: '0.5.0',
+    date: '2026-10-21',
+    changes: [
+      'Fixed: transcription crashed on the iPhone\'s graphics chip. Both models now run on the processor, which is the path that was tested. The graphics chip will only be used for models made for it.',
+      'After a crash, the note opened at start now shows what happened and the retry buttons straight away.',
+    ],
+  },
+  {
     version: '0.4.2',
     date: '2026-10-21',
     changes: [

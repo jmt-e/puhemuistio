@@ -19,6 +19,7 @@ let nextId = 1;
 const calls = new Map();
 let devicePromise = null;
 let gpuFailed = false;
+let lastDevice = null;
 
 function getWorker() {
   if (worker) return worker;
@@ -62,7 +63,7 @@ export function setDevicePreference(pref) {
 }
 
 /** 'webgpu' if the phone has a usable GPU adapter (and it's allowed), else 'wasm'. */
-export function pickDevice() {
+export function gpuAvailable() {
   if (devicePref === 'wasm' || gpuFailed) return Promise.resolve('wasm');
   if (!devicePromise) {
     devicePromise = (async () => {
@@ -86,6 +87,16 @@ export async function getModel(modelId) {
   return list.find((m) => m.id === modelId) || list.find((m) => m.default) || list[0] || null;
 }
 
+/**
+ * Where this model runs: the GPU only if the phone has one, it's allowed,
+ * and the model comes in a GPU-friendly version (dtype.webgpu in
+ * models.json). 8-bit files don't suit WebGPU: on iPhone they crashed Safari.
+ */
+export async function deviceFor(model) {
+  if (!model?.dtype?.webgpu) return 'wasm';
+  return gpuAvailable();
+}
+
 async function requireModel(modelId) {
   const model = await getModel(modelId);
   if (!model) throw new Error('No speech model is installed in this version of the app yet.');
@@ -94,25 +105,25 @@ async function requireModel(modelId) {
 
 /** Download size of the model for this phone, in bytes. */
 export async function modelBytes(model) {
-  return bytesFor(model, await pickDevice());
+  return bytesFor(model, await deviceFor(model));
 }
 
 export async function cachedBytes(model) {
-  return cachedBytesFor(model, await pickDevice());
+  return cachedBytesFor(model, await deviceFor(model));
 }
 
 /** Bytes on the phone, including a download that stopped half-way. */
 export async function savedBytes(model) {
-  return savedBytesFor(model, await pickDevice());
+  return savedBytesFor(model, await deviceFor(model));
 }
 
 export async function isCached(model) {
-  return isCachedFor(model, await pickDevice());
+  return isCachedFor(model, await deviceFor(model));
 }
 
 export async function prepare(modelId, onProgress, signal, onPiece) {
   const model = await requireModel(modelId);
-  await downloadModel(model, await pickDevice(), onProgress, signal, onPiece);
+  await downloadModel(model, await deviceFor(model), onProgress, signal, onPiece);
   return model;
 }
 
@@ -142,7 +153,8 @@ export async function transcribe(audio, { modelId, language = 'fi', onProgress }
       [copy.buffer],
     );
   };
-  const device = await pickDevice();
+  const device = await deviceFor(model);
+  lastDevice = device;
   try {
     return await run(device);
   } catch (err) {
@@ -150,10 +162,12 @@ export async function transcribe(audio, { modelId, language = 'fi', onProgress }
     // WebGPU on phones is young; fall back to the CPU for the rest of this session.
     console.warn('WebGPU failed, using WebAssembly', err);
     gpuFailed = true;
+    lastDevice = 'wasm';
     return await run('wasm');
   }
 }
 
+/** The device the last transcription ran on ('webgpu' | 'wasm'), or null. */
 export function currentDevice() {
-  return gpuFailed ? Promise.resolve('wasm') : devicePromise || Promise.resolve(null);
+  return Promise.resolve(lastDevice);
 }

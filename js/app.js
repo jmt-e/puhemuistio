@@ -463,7 +463,7 @@ async function runTranscription(noteId, { replace, language }) {
     // next start sees it and doesn't retry in a crash loop. It records the
     // model, the chip and the step, so the message can say where it stopped.
     const model = await engine.getModel(state.settings.model);
-    const marker = { model: model?.id, label: model?.label, device: await engine.pickDevice(), stage: 'start' };
+    const marker = { model: model?.id, label: model?.label, device: await engine.deviceFor(model), stage: 'start' };
     note.transcribing = marker;
     note.crash = null;
     await db.saveNote(note);
@@ -732,10 +732,13 @@ async function showSettings() {
   $('#settings-gpu').disabled = !navigator.gpu;
   $('#version-info').textContent = `Version ${APP_VERSION}`;
   renderStorage();
-  const dev = await engine.pickDevice();
+  const gpu = (await engine.gpuAvailable()) === 'webgpu';
+  const dev = await engine.deviceFor(await engine.getModel(state.settings.model).catch(() => null));
   $('#device-info').textContent = dev === 'webgpu'
-    ? 'This phone runs the model on its graphics chip (WebGPU).'
-    : 'This phone runs the model on its processor (WebAssembly).';
+    ? 'The chosen model runs on the phone\'s graphics chip (WebGPU).'
+    : gpu
+      ? 'The chosen model runs on the phone\'s processor. The graphics chip is used only for models made for it; the current ones are not (on iPhone they crashed).'
+      : 'The chosen model runs on the phone\'s processor (WebAssembly).';
   await renderModels();
 }
 
@@ -1049,14 +1052,12 @@ function wire() {
   });
 }
 
-async function resumeUnfinishedJobs() {
-  let modelReady = false;
-  try {
-    const model = await engine.getModel(state.settings.model);
-    modelReady = !!model && (await engine.isCached(model));
-  } catch {
-    // No model list: nothing can be transcribed now anyway.
-  }
+/**
+ * Notes whose transcription was running when the app stopped (Safari
+ * killed the page, usually out of memory). Runs before the first screen is
+ * shown, so a note opened at start already shows what happened.
+ */
+async function markCrashedJobs() {
   for (const n of await db.listNotes()) {
     if (n.transcribing) {
       // The app stopped in the middle of this one. Don't retry on our own:
@@ -1072,7 +1073,20 @@ async function resumeUnfinishedJobs() {
       n.transcribing = false;
       n.error = `The app closed ${where}${how ? ` (${how})` : ''}, most likely because the phone ran out of memory.`;
       await db.saveNote(n);
-    } else if (n.pendingFrom != null && !n.error && n.audioSamples > 0 && modelReady) {
+    }
+  }
+}
+
+async function resumeUnfinishedJobs() {
+  let modelReady = false;
+  try {
+    const model = await engine.getModel(state.settings.model);
+    modelReady = !!model && (await engine.isCached(model));
+  } catch {
+    // No model list: nothing can be transcribed now anyway.
+  }
+  for (const n of await db.listNotes()) {
+    if (n.pendingFrom != null && !n.error && !n.transcribing && n.audioSamples > 0 && modelReady) {
       // Waiting from an earlier session (e.g. app closed before it started).
       // Only when the model is already here: never start a big download unasked.
       queueTranscription(n.id);
@@ -1087,6 +1101,7 @@ async function main() {
   state.settings = await db.getSettings();
   engine.setDevicePreference(state.settings.device);
   wire();
+  await markCrashedJobs();
   await route();
   resumeUnfinishedJobs();
   resumeDownload();
