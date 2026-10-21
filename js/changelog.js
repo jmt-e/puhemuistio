@@ -8,6 +8,7 @@ export const CHANGELOG = [
     date: '2026-10-21',
     changes: [
       'Version history in Settings, and a short notice after the app updates.',
+      'The same list is in CHANGELOG.md in the project on GitHub.',
     ],
   },
   {

@@ -23,7 +23,8 @@ phone unless you tap Copy, Email, Share, File or Export.
 ## Development
 
 Plain HTML, CSS and JavaScript, no build step. See `CLAUDE.md` for the design,
-rules and roadmap.
+rules and roadmap, `CHANGELOG.md` for what changed in each version, and
+`models/README.md` for how the speech models were chosen.
 
     node tests/serve.mjs 8080   # then open http://localhost:8080/
 

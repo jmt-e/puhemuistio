@@ -94,7 +94,9 @@ We build this as a simple proof of concept and improve it step by step.
   the change. For a change the owner will notice, also add an entry at the
   top of `js/changelog.js` (plain words, newest first): its version is the
   app version, shown in Settings → Version history and announced once after
-  the update. New JS files must be added to `SHELL` in `sw.js` (offline).
+  the update. Then run `node scripts/changelog-md.mjs` to regenerate
+  `CHANGELOG.md` (never edit it by hand). New JS files must be added to
+  `SHELL` in `sw.js` (offline).
 - After changing model files: `python3 scripts/update-manifest.py`.
 - `env.localModelPath` must be a path, not a full URL (Transformers.js 4
   skips local lookups for http URLs).
