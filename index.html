@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!--
+    Privacy: this page may only talk to the server it came from. No other
+    server can be reached for scripts, styles, fonts, images or data, and
+    nothing can be sent anywhere (connect-src 'self' and the app never
+    uploads). 'wasm-unsafe-eval' lets the speech model's WebAssembly run.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self'; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Puhemuistio</title>
+  <meta name="description" content="Private voice notes. Speech recognition runs on your phone.">
+  <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161514" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Puhemuistio">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <noscript>Puhemuistio needs JavaScript.</noscript>
+
+  <!-- Notes list -->
+  <section id="view-list" class="view" hidden>
+    <header class="bar">
+      <h1>Notes</h1>
+      <div class="bar-actions">
+        <button class="text-btn" id="select-toggle" type="button">Select</button>
+        <button class="icon-btn" id="open-settings" type="button" aria-label="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+        </button>
+      </div>
+    </header>
+    <div class="search">
+      <input id="search" type="search" placeholder="Search notes" autocomplete="off" enterkeyhint="search">
+    </div>
+    <div id="draft-banner" class="banner" hidden></div>
+    <ul id="notes" class="notes"></ul>
+    <p id="empty" class="empty" hidden>No notes yet. Tap the microphone to record your first note.</p>
+
+    <div class="dock" id="dock-record">
+      <button class="record-fab" id="new-note" type="button" aria-label="New note">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      </button>
+    </div>
+    <div class="dock select-dock" id="dock-select" hidden>
+      <span id="select-count">0 selected</span>
+      <div class="select-actions">
+        <button type="button" data-multi="copy">Copy</button>
+        <button type="button" data-multi="email">Email</button>
+        <button type="button" data-multi="share">Share</button>
+        <button type="button" data-multi="file">File</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Recording -->
+  <section id="view-record" class="view" hidden>
+    <header class="bar">
+      <button class="text-btn" id="record-cancel" type="button">Cancel</button>
+      <h1 id="record-heading">New note</h1>
+      <span class="bar-spacer"></span>
+    </header>
+    <div class="record-body">
+      <label class="field" id="record-title-field">
+        <span>Title</span>
+        <input id="record-title" type="text" placeholder="Customer name" autocomplete="off" enterkeyhint="done">
+      </label>
+      <p id="record-append" class="muted" hidden></p>
+      <div class="segmented" id="record-lang" role="radiogroup" aria-label="Language">
+        <button type="button" role="radio" data-lang="fi">Finnish</button>
+        <button type="button" role="radio" data-lang="en">English</button>
+        <button type="button" role="radio" data-lang="auto">Auto</button>
+      </div>
+
+      <div class="record-center">
+        <div class="timer" id="timer">0:00</div>
+        <div class="limit muted" id="limit">up to 5:00</div>
+        <div class="meter" aria-hidden="true"><div class="meter-fill" id="meter"></div></div>
+        <p class="record-status" id="record-status">Tap to start</p>
+      </div>
+
+      <div class="record-controls">
+        <button class="record-main" id="btn-record" type="button" aria-label="Start recording">
+          <span class="record-dot"></span>
+          <span class="pause-bars"><i></i><i></i></span>
+        </button>
+        <button class="ctrl-btn stop" id="btn-stop" type="button" hidden>Stop</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Note -->
+  <section id="view-note" class="view" hidden>
+    <header class="bar">
+      <button class="text-btn back" id="note-back" type="button">‹ Notes</button>
+      <span class="bar-spacer"></span>
+      <button class="text-btn" id="note-more" type="button">More</button>
+    </header>
+    <div class="note-body">
+      <input id="note-title" class="note-title" type="text" placeholder="Title" autocomplete="off" enterkeyhint="done">
+      <div class="note-meta muted" id="note-meta"></div>
+      <div class="progress-box" id="note-progress" hidden>
+        <div class="progress-label" id="note-progress-label">Transcribing…</div>
+        <div class="progress"><div class="progress-fill" id="note-progress-fill"></div></div>
+      </div>
+      <div class="banner warn" id="note-error" hidden></div>
+      <textarea id="note-text" class="note-text" placeholder="The text appears here after transcription. You can edit it."></textarea>
+      <div class="audio-row" id="note-audio" hidden>
+        <audio id="note-player" controls preload="none"></audio>
+      </div>
+      <div class="share-row">
+        <button type="button" data-share="copy">Copy</button>
+        <button type="button" data-share="email">Email</button>
+        <button type="button" data-share="share">Share</button>
+        <button type="button" data-share="file">File</button>
+      </div>
+      <button class="wide-btn primary" id="note-add" type="button">Add to note</button>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section id="view-settings" class="view" hidden>
+    <header class="bar">
+      <button class="text-btn back" id="settings-back" type="button">‹ Notes</button>
+      <h1>Settings</h1>
+      <span class="bar-spacer"></span>
+    </header>
+    <div class="settings-body">
+      <h2>Speech recognition</h2>
+      <div id="model-list" class="card-list"></div>
+      <p class="muted small" id="device-info"></p>
+
+      <h2>Default language</h2>
+      <div class="segmented" id="settings-lang" role="radiogroup" aria-label="Default language">
+        <button type="button" role="radio" data-lang="fi">Finnish</button>
+        <button type="button" role="radio" data-lang="en">English</button>
+        <button type="button" role="radio" data-lang="auto">Auto</button>
+      </div>
+
+      <h2>Email</h2>
+      <label class="field">
+        <span>Default recipient</span>
+        <input id="settings-email" type="email" inputmode="email" autocomplete="email" placeholder="crm@example.com">
+      </label>
+
+      <h2>Backup</h2>
+      <label class="check"><input type="checkbox" id="backup-audio"> Include audio (much bigger file)</label>
+      <div class="btn-row">
+        <button class="wide-btn" id="backup-export" type="button">Export all notes</button>
+        <button class="wide-btn" id="backup-import" type="button">Import backup</button>
+        <input type="file" id="backup-file" accept=".json,application/json" hidden>
+      </div>
+
+      <h2>Storage</h2>
+      <p class="muted small" id="storage-info"></p>
+
+      <h2>Privacy</h2>
+      <p class="muted small">Recording, speech recognition and your notes stay on this phone. The app can only load its own files, and it sends nothing anywhere. A note leaves the phone only when you tap Copy, Email, Share, File or Export.</p>
+      <p class="muted small" id="version-info"></p>
+    </div>
+  </section>
+
+  <!-- Sheets and messages -->
+  <div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

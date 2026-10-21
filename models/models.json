@@ -1,0 +1,21 @@
+{
+  "models": [],
+  "runtime": [
+    {
+      "path": "vendor/ort/ort-wasm-simd-threaded.mjs",
+      "size": 24381
+    },
+    {
+      "path": "vendor/ort/ort-wasm-simd-threaded.wasm",
+      "size": 14264838
+    },
+    {
+      "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs",
+      "size": 53057
+    },
+    {
+      "path": "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm",
+      "size": 26861777
+    }
+  ]
+}
