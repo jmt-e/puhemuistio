@@ -87,20 +87,7 @@ export async function downloadModel(model, device, onProgress, signal) {
       onProgress?.({ loaded, total });
       continue;
     }
-    const res = await fetch(f.url, { cache: 'no-store', signal });
-    if (!res.ok) throw new Error(`Download failed (${res.status}): ${f.url.slice(BASE.length)}`);
-    const reader = res.body.getReader();
-    const parts = [];
-    let got = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      parts.push(value);
-      got += value.length;
-      onProgress?.({ loaded: loaded + got, total });
-    }
-    if (got !== f.size) throw new Error(`Download incomplete: ${f.url.slice(BASE.length)} (${got} of ${f.size} bytes)`);
-    const type = res.headers.get('content-type') || 'application/octet-stream';
+    const { parts, got, type } = await fetchWithRetry(f, (n) => onProgress?.({ loaded: loaded + n, total }), signal);
     try {
       await cache.put(f.url, new Response(new Blob(parts, { type }), { headers: { 'content-type': type, 'content-length': String(got) } }));
     } catch (err) {
@@ -111,6 +98,37 @@ export async function downloadModel(model, device, onProgress, signal) {
     }
     loaded += f.size;
     onProgress?.({ loaded, total });
+  }
+}
+
+const name = (f) => f.url.slice(BASE.length);
+
+/** Fetch one file completely, retrying a few times: phone connections drop. */
+async function fetchWithRetry(f, onBytes, signal, tries = 4) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetch(f.url, { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const parts = [];
+      let got = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value);
+        got += value.length;
+        onBytes(got);
+      }
+      if (got !== f.size) throw new Error(`got ${got} of ${f.size} bytes`);
+      return { parts, got, type: res.headers.get('content-type') || 'application/octet-stream' };
+    } catch (err) {
+      if (err.name === 'AbortError' || attempt >= tries) {
+        if (err.name === 'AbortError') throw err;
+        throw new Error(`${name(f)}: ${err.message}`);
+      }
+      onBytes(0);
+      await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
   }
 }
 
